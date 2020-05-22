@@ -82,6 +82,8 @@ def mllvm: S<"mllvm">;
 defm pdb: Eq<"pdb", "Output PDB debug info file, chosen implicitly if the argument is empty">;
 def Xlink : J<"Xlink=">, MetaVarName<"<arg>">,
     HelpText<"Pass <arg> to the COFF linker">;
+defm thinlto_cache_dir: EqLong<"thinlto-cache-dir",
+  "Path to ThinLTO cached object file directory">;
 
 // Alias
 def alias_entry_e: JoinedOrSeparate<["-"], "e">, Alias<entry>;

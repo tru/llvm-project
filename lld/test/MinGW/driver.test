@@ -223,3 +223,6 @@ UNKNOWN_ARG: error: unknown argument: --foo
 
 RUN: not ld.lld -m i386pep 2>&1 | FileCheck -check-prefix NO_INPUT_FILES %s
 NO_INPUT_FILES: error: no input files
+
+RUN: ld.lld -### foo.o -m i386pe --thinlto-cache-dir=_foo | FileCheck -check-prefix=THINLTO_CACHEDIR %s
+THINLTO_CACHEDIR: -lldltocache:_foo
