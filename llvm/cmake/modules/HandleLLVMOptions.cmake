@@ -956,9 +956,9 @@ if(LLVM_ENABLE_LTO AND LLVM_ON_WIN32 AND NOT LINKER_IS_LLD_LINK AND NOT MINGW)
   message(FATAL_ERROR "When compiling for Windows, LLVM_ENABLE_LTO requires using lld as the linker (point CMAKE_LINKER at lld-link.exe)")
 endif()
 if(uppercase_LLVM_ENABLE_LTO STREQUAL "THIN")
-  append("-flto=thin" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
+  append("-flto=thin -fwhole-program-vtables" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
   if(NOT LINKER_IS_LLD_LINK)
-    append("-flto=thin" CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+    append("-flto=thin -fwhole-program-vtables -Wl,--lto-whole-program-visibility -Wl,--icf=all" CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
   endif()
   # If the linker supports it, enable the lto cache. This improves initial build
   # time a little since we re-link a lot of the same objects, and significantly
