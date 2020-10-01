@@ -958,7 +958,7 @@ endif()
 if(uppercase_LLVM_ENABLE_LTO STREQUAL "THIN")
   append("-flto=thin -fwhole-program-vtables" CMAKE_CXX_FLAGS CMAKE_C_FLAGS)
   if(NOT LINKER_IS_LLD_LINK)
-    append("-flto=thin -fwhole-program-vtables -Wl,--lto-whole-program-visibility -Wl,--icf=all" CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
+    append("-flto=thin -fwhole-program-vtables" CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS)
   endif()
   # If the linker supports it, enable the lto cache. This improves initial build
   # time a little since we re-link a lot of the same objects, and significantly
