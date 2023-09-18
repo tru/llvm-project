@@ -19,6 +19,8 @@ import sys
 import time
 from typing import List, Optional
 
+foo="bar"
+
 beginner_comment = """
 Hi!
 
@@ -645,6 +647,12 @@ issue_subscriber_parser.add_argument("--issue-number", type=int, required=True)
 pr_subscriber_parser = subparsers.add_parser("pr-subscriber")
 pr_subscriber_parser.add_argument("--label-name", type=str, required=True)
 pr_subscriber_parser.add_argument("--issue-number", type=int, required=True)
+
+pr_patch_post = subparsers.add_parser("pr-patch")
+pr_patch_post.add_argument("--issue-number", type=int, required=True)
+pr_patch_post.add_argument("--message", type=str)
+pr_patch_post.add_argument("--file", type=str)
+pr_patch_post.add_argument("--delete", type=bool, action="store_true", default=False)
 
 release_workflow_parser = subparsers.add_parser("release-workflow")
 release_workflow_parser.add_argument(
