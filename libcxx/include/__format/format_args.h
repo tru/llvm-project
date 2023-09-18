@@ -23,6 +23,7 @@
 #endif
 
 _LIBCPP_BEGIN_NAMESPACE_STD
+#define  _HELLO   12
 
 #if _LIBCPP_STD_VER >= 20
 
