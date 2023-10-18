@@ -2418,9 +2418,16 @@ static bool CheckEvaluationResult(CheckEvaluationResultKind CERK,
     if (const CXXRecordDecl *CD = dyn_cast<CXXRecordDecl>(RD)) {
       unsigned BaseIndex = 0;
       for (const CXXBaseSpecifier &BS : CD->bases()) {
-        if (!CheckEvaluationResult(CERK, Info, DiagLoc, BS.getType(),
-                                   Value.getStructBase(BaseIndex), Kind,
-                                   /*SubobjectDecl=*/nullptr, CheckedTemps))
+        const APValue &BaseValue = Value.getStructBase(BaseIndex);
+        if (!BaseValue.hasValue()) {
+          SourceLocation TypeBeginLoc = BS.getBaseTypeLoc();
+          Info.FFDiag(TypeBeginLoc, diag::note_constexpr_uninitialized_base)
+              << BS.getType() << SourceRange(TypeBeginLoc, BS.getEndLoc());
+          return false;
+        }
+        if (!CheckEvaluationResult(CERK, Info, DiagLoc, BS.getType(), BaseValue,
+                                   Kind, /*SubobjectDecl=*/nullptr,
+                                   CheckedTemps))
           return false;
         ++BaseIndex;
       }
@@ -6006,8 +6013,9 @@ const AccessKinds StartLifetimeOfUnionMemberHandler::AccessKind;
 /// operator whose left-hand side might involve a union member access. If it
 /// does, implicitly start the lifetime of any accessed union elements per
 /// C++20 [class.union]5.
-static bool HandleUnionActiveMemberChange(EvalInfo &Info, const Expr *LHSExpr,
-                                          const LValue &LHS) {
+static bool MaybeHandleUnionActiveMemberChange(EvalInfo &Info,
+                                               const Expr *LHSExpr,
+                                               const LValue &LHS) {
   if (LHS.InvalidBase || LHS.Designator.Invalid)
     return false;
 
@@ -6062,8 +6070,14 @@ static bool HandleUnionActiveMemberChange(EvalInfo &Info, const Expr *LHSExpr,
         break;
       // Walk path backwards as we walk up from the base to the derived class.
       for (const CXXBaseSpecifier *Elt : llvm::reverse(ICE->path())) {
+        if (Elt->isVirtual()) {
+          // A class with virtual base classes never has a trivial default
+          // constructor, so S(E) is empty in this case.
+          E = nullptr;
+          break;
+        }
+
         --PathLength;
-        (void)Elt;
         assert(declaresSameEntity(Elt->getType()->getAsCXXRecordDecl(),
                                   LHS.Designator.Entries[PathLength]
                                       .getAsBaseOrMember().getPointer()));
@@ -7741,7 +7755,7 @@ public:
         // per C++20 [class.union]5.
         if (Info.getLangOpts().CPlusPlus20 && OCE &&
             OCE->getOperator() == OO_Equal && MD->isTrivial() &&
-            !HandleUnionActiveMemberChange(Info, Args[0], ThisVal))
+            !MaybeHandleUnionActiveMemberChange(Info, Args[0], ThisVal))
           return false;
 
         Args = Args.slice(1);
@@ -8614,7 +8628,7 @@ bool LValueExprEvaluator::VisitBinAssign(const BinaryOperator *E) {
     return false;
 
   if (Info.getLangOpts().CPlusPlus20 &&
-      !HandleUnionActiveMemberChange(Info, E->getLHS(), Result))
+      !MaybeHandleUnionActiveMemberChange(Info, E->getLHS(), Result))
     return false;
 
   return handleAssignment(this->Info, E, Result, E->getLHS()->getType(),
@@ -15218,14 +15232,6 @@ static bool FastEvaluateAsRValue(const Expr *Exp, Expr::EvalResult &Result,
     return true;
   }
 
-  // FIXME: Evaluating values of large array and record types can cause
-  // performance problems. Only do so in C++11 for now.
-  if (Exp->isPRValue() &&
-      (Exp->getType()->isArrayType() || Exp->getType()->isRecordType()) &&
-      !Ctx.getLangOpts().CPlusPlus11) {
-    IsConst = false;
-    return true;
-  }
   return false;
 }
 
@@ -15466,12 +15472,6 @@ bool Expr::EvaluateAsInitializer(APValue &Value, const ASTContext &Ctx,
     VD->printQualifiedName(OS);
     return Name;
   });
-
-  // FIXME: Evaluating initializers for large array and record types can cause
-  // performance problems. Only do so in C++11 for now.
-  if (isPRValue() && (getType()->isArrayType() || getType()->isRecordType()) &&
-      !Ctx.getLangOpts().CPlusPlus11)
-    return false;
 
   Expr::EvalStatus EStatus;
   EStatus.Diag = &Notes;

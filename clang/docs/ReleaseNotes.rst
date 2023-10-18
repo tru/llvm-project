@@ -186,6 +186,9 @@ C Language Changes
     _Generic(i, int : 0, const int : 1); // Warns about unreachable code, the
                                          // result is 0, not 1.
     _Generic(typeof(i), int : 0, const int : 1); // Result is 1, not 0.
+- ``structs``, ``unions``, and ``arrays`` that are const may now be used as
+  constant expressions.  This change is more consistent with the behavior of
+  GCC.
 
 C2x Feature Support
 ^^^^^^^^^^^^^^^^^^^
@@ -270,6 +273,10 @@ Non-comprehensive list of changes in this release
   types. This allows access to ``llvm.nearbyint`` for arbitrary
   floating-point and vector of floating-point types.
 - Clang AST matcher now matches concept declarations with `conceptDecl`.
+- Clang now supports more GCC stdio builtins: ``__builtin_vprintf``, ``__builtin_vfprintf``,
+  ``__builtin_fscanf``, ``__builtin_scanf``, ``__builtin_sscanf``, ``__builtin_vfscanf``,
+  ``__builtin_vscanf``, ``__builtin_vsscanf``.
+
 
 New Compiler Flags
 ------------------
@@ -287,6 +294,14 @@ New Compiler Flags
   individual relocations in the program will generally increase.
 - ``-f[no-]assume-unique-vtables`` controls whether Clang assumes that each
   class has a unique vtable address, when that is required by the ABI.
+- ``-print-multi-flags-experimental`` prints the flags used for multilib
+  selection. See `the multilib docs <https://clang.llvm.org/docs/Multilib.html>`_
+  for more details.
+- ``-maix32`` and ``-maix64`` are new GCC compatibility flags that select the
+  bitmode to target on AIX.
+- ``-p`` is a new GCC compatibility flag for AIX and Linux which works
+  similarly to ``-pg`` by writing profile information, but targets the ``prof``
+  tool as opposed to the ``gprof`` tool.
 
 Deprecated Compiler Flags
 -------------------------
@@ -301,10 +316,6 @@ Modified Compiler Flags
   ``.dwo`` file at ``obj/x-a.dwo``, instead of a file in the temporary
   directory (``/tmp`` on \*NIX systems, if none of the environment variables
   TMPDIR, TMP, and TEMP are specified).
-
-- ``-ffat-lto-objects`` can now be used to emit object files with both object
-  code and LLVM bitcode. Previously this flag was ignored for GCC compatibility.
-  (`See related patch <https://reviews.llvm.org/D146777>`_).
 
 Removed Compiler Flags
 -------------------------
@@ -325,7 +336,9 @@ Attribute Changes in Clang
   the flag ``-Wunsafe-buffer-usage`` is enabled.
 - ``__declspec`` attributes can now be used together with the using keyword. Before
   the attributes on ``__declspec`` was ignored, while now it will be forwarded to the
-  point where the alias is used.
+  point where the alias is used. Note, some incorrect uses of ``__declspec`` on a
+  ``using`` declaration were being silently ignored and will now be appropriately
+  diagnosed as ignoring the attribute.
 - Introduced a new ``USR`` (unified symbol resolution) clause inside of the
   existing ``__attribute__((external_source_symbol))`` attribute. Clang's indexer
   uses the optional USR value when indexing Clang's AST. This value is expected
@@ -462,15 +475,15 @@ Improvements to Clang's diagnostics
 - ``-Wformat`` cast fix-its will now suggest ``static_cast`` instead of C-style casts
   for C++ code.
 - ``-Wformat`` will no longer suggest a no-op fix-it for fixing scoped enum format
-  warnings. Instead, it will suggest casting the enum object to the type specified
-  in the format string.
-- Clang now emits ``-Wconstant-logical-operand`` warning even when constant logical
-  operand is on left side.
-  (`#37919 <https://github.com/llvm/llvm-project/issues/37919>`_)
+  warnings. Instead, it will suggest casting the enum object based on its
+  underlying type.
 
 Bug Fixes in This Version
 -------------------------
-
+- Fixed an issue where a class template specialization whose declaration is
+  instantiated in one module and whose definition is instantiated in another
+  module may end up with members associated with the wrong declaration of the
+  class, which can result in miscompiles in some cases.
 - Added a new diagnostic warning group
   ``-Wdeprecated-redundant-constexpr-static-def``, under the existing
   ``-Wdeprecated`` group. This controls warnings about out-of-line definitions
@@ -693,6 +706,19 @@ Bug Fixes in This Version
   (`#64005 <https://github.com/llvm/llvm-project/issues/64005>_`)
 - Fix crash on nested templated class with template function call.
   (`#61159 <https://github.com/llvm/llvm-project/issues/61159>_`)
+- Fix a hang on valid C code passing a function type as an argument to
+  ``typeof`` to form a function declaration.
+  (`#64713 <https://github.com/llvm/llvm-project/issues/64713>_`)
+- Clang now correctly diagnoses ``function_needs_feature`` when always_inline
+  callee has incompatible target features with caller.
+- Removed the linking of libraries when ``-r`` is passed to the driver on AIX.
+- Fixed an Itanium ABI bug where we force exactly two-byte alignment on member
+  functions to reserve a bit in function pointers for identifying pointers to
+  virtual member functions even if the target required a greater function
+  alignment and/or did not have function pointers which point to function entry
+  points (i.e., uses function descriptor objects instead).
+- Fixes a ``clang-17`` regression where ``LLVM_UNREACHABLE_OPTIMIZE=OFF``
+  cannot be used with ``Release`` mode builds. (`#68237 <https://github.com/llvm/llvm-project/issues/68237>`_).
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -813,6 +839,13 @@ Bug Fixes to C++ Support
 - Fix constraint checking of non-generic lambdas.
   (`#63181 <https://github.com/llvm/llvm-project/issues/63181>`_)
 
+- Update ``FunctionDeclBitfields.NumFunctionDeclBits``. This fixes:
+  (`#64171 <https://github.com/llvm/llvm-project/issues/64171>`_).
+
+- Fix a crash caused by substitution failure in expression requirements.
+  (`#64172 <https://github.com/llvm/llvm-project/issues/64172>`_) and
+  (`#64723 <https://github.com/llvm/llvm-project/issues/64723>`_).
+
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -880,6 +913,10 @@ Arm and AArch64 Support
   ``-mfloat-abi=hard`` or a triple ending in ``hf``) would silently
   use the soft-float ABI instead.
 
+- Clang now emits ``-Wunsupported-abi`` if the hard-float ABI is specified
+  and the selected processor lacks floating point registers.
+  (`#55755 <https://github.com/llvm/llvm-project/issues/55755>`_)
+
 - Clang builtin ``__arithmetic_fence`` and the command line option ``-fprotect-parens``
   are now enabled for AArch64.
 
@@ -895,6 +932,9 @@ Arm and AArch64 Support
 - Fix a crash when ``preserve_all`` calling convention is used on AArch64.
   `Issue 58145 <https://github.com/llvm/llvm-project/issues/58145>`_
 
+- Clang now warns if invalid target triples ``--target=aarch64-*-eabi`` or
+  ``--target=arm-*-elf`` are specified.
+
 Windows Support
 ^^^^^^^^^^^^^^^
 
@@ -903,6 +943,8 @@ LoongArch Support
 
 - Patchable function entry (``-fpatchable-function-entry``) is now supported
   on LoongArch.
+- An ABI mismatch between GCC and Clang related to the handling of empty structs
+  in C++ parameter passing under ``lp64d`` ABI was fixed.
 - Unaligned memory accesses can be toggled by ``-m[no-]unaligned-access`` or the
   aliases ``-m[no-]strict-align``.
 - Non ``$``-prefixed GPR names (e.g. ``r4`` and ``a0``) are allowed in inlineasm
@@ -927,6 +969,9 @@ RISC-V Support
 - The rules for ordering of extensions in ``-march`` strings were relaxed. A
   canonical ordering is no longer enforced on ``z*``, ``s*``, and ``x*``
   prefixed extensions.
+- An ABI mismatch between GCC and Clang related to the handling of empty
+  structs in C++ parameter passing under the hard floating point calling
+  conventions was fixed.
 - Support the RVV intrinsics v0.12. Please checkout `the RVV C intrinsics
   specification
   <https://github.com/riscv-non-isa/rvv-intrinsic-doc/releases/tag/v0.12.0>`_.
@@ -939,6 +984,10 @@ RISC-V Support
   * Added intrinsics for reinterpret cast between vector boolean and vector
     integer ``m1`` value
   * Removed the ``vread_csr`` and ``vwrite_csr`` intrinsics
+- Default ``-fdebug-dwarf-version=`` is downgraded to 4 to work around
+  incorrect DWARF related to ULEB128 and linker compatibility before
+  ``R_RISCV_SET_ULEB128`` becomes more widely supported.
+  (`D157663 <https://reviews.llvm.org/D157663>`_).
 
 CUDA/HIP Language Changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -952,10 +1001,19 @@ CUDA Support
 
 AIX Support
 ^^^^^^^^^^^
-- Add an AIX-only link-time option, `-mxcoff-build-id=0xHEXSTRING`, to allow users
-  to embed a hex id in their binary such that it's readable by the program itself.
-  This option is an alternative to the `--build-id=0xHEXSTRING` GNU linker option
-  which is currently not supported by the AIX linker.
+- Enabled ThinLTO support. Minimum OS requirement is AIX 7.2 TL5 SP7 or
+  the upcoming AIX 7.3 TL2.
+
+- Enabled integrated assembler (``-f[no-]integrated-as``) for LTO. LTO now
+  defaults to the integrated assembler.
+
+- Enabled Clang-based instrumented profiling
+  (``-fprofile-instr-[generate|use]``).
+
+- Added an AIX-only link-time option, ``-mxcoff-build-id=0xHEXSTRING``, to allow
+  users to embed a hex id in their binary such that it's readable by the program
+  itself. This option is an alternative to the ``--build-id=0xHEXSTRING`` GNU
+  linker option, which is currently not supported by the AIX linker.
 
 - Introduced the ``-mxcoff-roptr`` option to place constant objects with
   relocatable address values in the read-only data section. This option should
@@ -963,6 +1021,14 @@ AIX Support
   ``-fno-data-sections``. When ``-mxcoff-roptr`` is in effect at link time,
   read-only data sections with relocatable address values that resolve to
   imported symbols are made writable.
+
+- Implemented the ``-frecord-command-line`` option on AIX, which saves the
+  command-line options used from compiling a source file to the corresponding
+  object file or binary file.
+
+- Added a new linker option, ``-K``, that is used to align the header, text,
+  data, and loader sections of the output file so that each section begins on
+  a page boundary.
 
 WebAssembly Support
 ^^^^^^^^^^^^^^^^^^^
@@ -979,6 +1045,11 @@ AVR Support
   overflows on AVR (where ``sizeof(int) == sizeof(unsigned short)``).  The type
   of ``USHRT_MAX`` is now ``unsigned int`` instead of ``int``, as required by
   the C standard.
+
+PowerPC Support
+^^^^^^^^^^^^^^^
+- Clang now emits errors when it detects incompatible target features for
+  PowerPC builtins.
 
 DWARF Support in Clang
 ----------------------
@@ -1127,6 +1198,12 @@ The following methods have been added:
 
 - ``clang_Location_isInSystemHeader`` exposed via the ``is_in_system_header``
   property of the `Location` class.
+
+Configurable Multilib
+---------------------
+The BareMetal toolchain for AArch64 & ARM now supports multilib, configurable
+via ``multilib.yaml``. See `the multilib docs <https://clang.llvm.org/docs/Multilib.html>`_
+for more details.
 
 Additional Information
 ======================
