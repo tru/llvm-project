@@ -446,10 +446,13 @@ def SparseTensor_StorageSpecifierInitOp : SparseTensor_Op<"storage_specifier.ini
     Example:
 
     ```mlir
-    #CSR = #sparse_tensor.encoding<{ dimLevelType = [ "dense", "compressed" ]}>
+    #CSR = #sparse_tensor.encoding<{
+      map = (i, j) -> (i : dense, j : compressed)
+    }>
     #CSR_SLICE = #sparse_tensor.encoding<{
-      dimLevelType = [ "dense", "compressed" ],
-      slice = [ (1, 4, 1), (1, 4, 2) ]
+      map = (d0 : #sparse_tensor<slice(1, 4, 1)>,
+             d1 : #sparse_tensor<slice(1, 4, 2)>) ->
+            (d0 : dense, d1 : compressed)
     }>
 
     %0 = sparse_tensor.storage_specifier.init :  !sparse_tensor.storage_specifier<#CSR>
@@ -515,6 +518,90 @@ def SparseTensor_SetStorageSpecifierOp : SparseTensor_Op<"storage_specifier.set"
   let assemblyFormat = "$specifier $specifierKind (`at` $level^)? `with` $value"
                        " attr-dict `:` qualified(type($result))";
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Sparse Tensor Coordinate Operations.
+//===----------------------------------------------------------------------===//
+
+def SparseTensor_LvlOp : SparseTensor_Op<"lvl", [ConditionallySpeculatable, NoMemoryEffect]>,
+    Arguments<(ins AnySparseTensor:$source, Index:$index)>,
+    Results<(outs Index:$result)> {
+  let summary = "level index operation";
+  let description = [{
+    The `sparse_tensor.lvl` behaves similar to `tensor.dim` operation.
+    It takes a sparse tensor and a level operand of type `index` and returns
+    the size of the requested level of the given sparse tensor.
+    If the sparse tensor has an identity dimension to level mapping, it returns
+    the same result as `tensor.dim`.
+    If the level index is out of bounds, the behavior is undefined.
+
+    Example:
+
+    ```mlir
+    #BSR = #sparse_tensor.encoding<{
+      map = ( i, j ) ->
+        ( i floordiv 2 : dense,
+          j floordiv 3 : compressed,
+          i mod 2      : dense,
+          j mod 3      : dense
+        )
+    }>
+
+    // Always returns 2 (4 floordiv 2), can be constant folded:
+    %c0 = arith.constant 0 : index
+    %x = sparse_tensor.lvl %A, %c0 : tensor<4x?xf32, #BSR>
+
+    // Return the dynamic dimension of %A computed by %j mod 3.
+    %c1 = arith.constant 1 : index
+    %y = sparse_tensor.lvl %A, %c1 : tensor<4x?xf32, #BSR>
+
+    // Always return 3 (since j mod 3 < 3), can be constant fold
+    %c3 = arith.constant 3 : index
+    %y = sparse_tensor.lvl %A, %c3 : tensor<4x?xf32, #BSR>
+    ```
+  }];
+
+  let assemblyFormat = [{
+    attr-dict $source `,` $index `:` type($source)
+  }];
+
+  let builders = [
+    OpBuilder<(ins "Value":$source, "int64_t":$index)>
+  ];
+
+  let extraClassDeclaration = [{
+    /// Helper function to get the index as a simple integer if it is constant.
+    std::optional<uint64_t> getConstantLvlIndex();
+
+    /// Interface method for ConditionallySpeculatable.
+    Speculation::Speculatability getSpeculatability();
+  }];
+
+  let hasVerifier = 1;
+  let hasFolder = 1;
+}
+
+def SparseTensor_CrdTranslateOp : SparseTensor_Op<"crd_translate", [Pure]>,
+    Arguments<(ins Variadic<Index>:$in_crds,
+                   SparseTensorCrdTransDirectionAttr:$direction,
+                   SparseTensorEncodingAttr:$encoder)>,
+    Results<(outs Variadic<Index>:$out_crds)> {
+  string summary = "Performs coordinate translation between level and dimension coordinate space.";
+  string description = [{
+    Performs coordinate translation between level and dimension coordinate space according
+    to the affine maps defined by $encoder.
+
+    Example:
+
+    ```mlir
+    %l0, %l1, %l2, %l3 = sparse_tensor.crd_translate dim_to_lvl [%d0, %d1] as #BSR
+                       : index, index, index, index
+    ```
+  }];
+  let assemblyFormat = "$direction `[` $in_crds `]` `as` $encoder attr-dict `:` type($out_crds)";
+  let hasVerifier = 1;
+  let hasFolder = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1260,8 +1347,7 @@ def SparseTensor_ForeachOp : SparseTensor_Op<"foreach",
      For example:
      ```mlir
      #COL_MAJOR = #sparse_tensor.encoding<{
-       dimLevelType = [ "compressed", "compressed" ],
-       dimOrdering = affine_map<(i,j) -> (j,i)>
+       map = (d0, d1) -> (d1 : compressed, d0 : compressed)
      }>
 
      // foreach on a column-major sparse tensor
@@ -1271,7 +1357,7 @@ def SparseTensor_ForeachOp : SparseTensor_Op<"foreach",
      }
 
      #ROW_MAJOR = #sparse_tensor.encoding<{
-       dimLevelType = [ "compressed", "compressed" ],
+       map = (d0, d1) -> (d0 : compressed, d1 : compressed)
      }>
 
      // foreach on a row-major sparse tensor

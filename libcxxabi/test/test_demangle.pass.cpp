@@ -14,6 +14,10 @@
 // UNSUPPORTED: stdlib=apple-libc++ && target={{.+}}-apple-macosx10.{{9|10|11|12|13|14|15}}
 // UNSUPPORTED: stdlib=apple-libc++ && target={{.+}}-apple-macosx11.0
 
+// Android's long double on x86[-64] is (64/128)-bits instead of Linux's usual
+// 80-bit format, and this demangling test is failing on it.
+// XFAIL: LIBCXX-ANDROID-FIXME && target={{i686|x86_64}}-{{.+}}-android{{.*}}
+
 #include "support/timer.h"
 #include <algorithm>
 #include <cassert>
