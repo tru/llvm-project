@@ -11,7 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "TGParser.h"
-#include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
@@ -610,7 +609,7 @@ bool TGParser::resolveArguments(Record *Rec, ArrayRef<ArgumentInit *> ArgValues,
                             ArgName->getAsUnquotedString() + "' once");
 
     ArgValueHandler(ArgName, ArgValue);
-    llvm::erase_value(UnsolvedArgNames, ArgName);
+    llvm::erase(UnsolvedArgNames, ArgName);
   }
 
   // For unsolved arguments, if there is no default value, complain.
