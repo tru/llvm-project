@@ -19,6 +19,8 @@ import sys
 import time
 from typing import List, Optional
 
+FOO =   "foo"
+
 beginner_comment = """
 Hi!
 
