@@ -1261,6 +1261,23 @@ __sanitizer_verify_double_ended_contiguous_container(const void*, const void*, c
 #    endif // defined(_LIBCPP_ABI_MICROSOFT) && !defined(_LIBCPP_BUILDING_LIBRARY)
 #  endif   // _LIBCPP_NO_AUTO_LINK
 
+// Auto-link the MSVC STL for some functions that are not duplicated in libc++.
+#  if defined(_LIBCPP_ABI_MICROSOFT) && defined(_LIBCPP_BUILDING_LIBRARY)
+#    ifndef _DLL
+#      ifdef _DEBUG
+#          pragma comment(lib, "libcpmtd.lib")
+#      else
+#          pragma comment(lib, "libcpmt.lib")
+#      endif // _DEBUG
+#    else // _DLL
+#      ifdef _DEBUG
+#        pragma comment(lib, "msvcprtd.lib")
+#      else
+#        pragma comment(lib, "msvcprt.lib")
+#      endif // _DEBUG
+#    endif // _DLL
+#  endif // defined(_LIBCPP_ABI_MICROSOFT) && !defined(_LIBCPP_BUILDING_LIBRARY)
+
 // Configures the fopen close-on-exec mode character, if any. This string will
 // be appended to any mode string used by fstream for fopen/fdopen.
 //
