@@ -138,6 +138,9 @@ class LibCXXProcessor(Processor):
         return line
 
 
+def foo( ):
+  bar ="hello"
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         usage="Call this script with a version and it will bump the version for you"
