@@ -20,6 +20,9 @@ import sys
 import time
 from typing import List, Optional
 
+
+BAR =      "ofoo"
+
 beginner_comment = """
 Hi!
 
