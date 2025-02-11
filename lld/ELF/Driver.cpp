@@ -257,8 +257,8 @@ bool LinkerDriver::tryAddFatLTOFile(MemoryBufferRef mb, StringRef archiveName,
       IRObjectFile::findBitcodeInMemBuffer(mb);
   if (errorToBool(fatLTOData.takeError()))
     return false;
-  files.push_back(
-      make<BitcodeFile>(*fatLTOData, archiveName, offsetInArchive, lazy));
+  files.push_back(make<BitcodeFile>(*fatLTOData, archiveName,
+                                    offsetInArchive, lazy));
   return true;
 }
 
@@ -285,7 +285,8 @@ void LinkerDriver::addFile(StringRef path, bool withLOption) {
     if (inWholeArchive) {
       for (const std::pair<MemoryBufferRef, uint64_t> &p : members) {
         if (isBitcode(p.first))
-          files.push_back(make<BitcodeFile>(p.first, path, p.second, false));
+          files.push_back(make<BitcodeFile>(p.first, path,
+                                                        p.second, false));
         else if (!tryAddFatLTOFile(p.first, path, p.second, false))
           files.push_back(createObjFile(p.first, path));
       }
@@ -314,7 +315,8 @@ void LinkerDriver::addFile(StringRef path, bool withLOption) {
         if (!tryAddFatLTOFile(p.first, path, p.second, true))
           files.push_back(createObjFile(p.first, path, true));
       } else if (magic == file_magic::bitcode)
-        files.push_back(make<BitcodeFile>(p.first, path, p.second, true));
+        files.push_back(
+            make<BitcodeFile>(p.first, path, p.second, true));
       else
         warn(path + ": archive member '" + p.first.getBufferIdentifier() +
              "' is neither ET_REL nor LLVM bitcode");
@@ -1275,6 +1277,7 @@ static void readConfigs(opt::InputArgList &args) {
   config->dependentLibraries = args.hasFlag(OPT_dependent_libraries, OPT_no_dependent_libraries, true);
   config->disableVerify = args.hasArg(OPT_disable_verify);
   config->discard = getDiscard(args);
+  config->dtltoDistributor = args.getLastArgValue(OPT_thinlto_distributor_eq);
   config->dwoDir = args.getLastArgValue(OPT_plugin_opt_dwo_dir_eq);
   config->dynamicLinker = getDynamicLinker(args);
   config->ehFrameHdr =
