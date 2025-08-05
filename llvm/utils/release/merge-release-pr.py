@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ===-- merge-release-pr.py  ------------------------------------------------===#
+# ===-- merge-release-pr.py --------------------------------------------------===#
 #
 # Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 # See https://llvm.org/LICENSE.txt for license information.
@@ -24,7 +24,6 @@ import argparse
 import json
 import subprocess
 import sys
-import time
 from typing import List
 
 
@@ -34,45 +33,30 @@ class PRMerger:
 
     def run_gh(self, gh_cmd: str, args: List[str]) -> str:
         cmd = ["gh", gh_cmd, "-Rllvm/llvm-project"] + args
-        p = subprocess.run(cmd, capture_output=True)
+        p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode != 0:
             print(p.stderr)
             raise RuntimeError("Failed to run gh")
         return p.stdout
 
     def validate_state(self, data):
-        """Validate the state of the PR, this means making sure that it is OPEN and not already merged or closed."""
         state = data["state"]
         if state != "OPEN":
             return False, f"state is {state.lower()}, not open"
         return True
 
     def validate_target_branch(self, data):
-        """
-        Validate that the PR is targetting a release/ branch. We could
-        validate the exact branch here, but I am not sure how to figure
-        out what we want except an argument and that might be a bit to
-        to much overhead.
-        """
-        baseRefName: str = data["baseRefName"]
-        if not baseRefName.startswith("release/"):
-            return False, f"target branch is {baseRefName}, not a release branch"
+        base_ref_name: str = data["baseRefName"]
+        if not base_ref_name.startswith("release/"):
+            return False, f"target branch is {base_ref_name}, not a release branch"
         return True
 
     def validate_approval(self, data):
-        """
-        Validate the approval decision. This checks that the PR has been
-        approved.
-        """
         if data["reviewDecision"] != "APPROVED":
             return False, "PR is not approved"
         return True
 
     def validate_status_checks(self, data):
-        """
-        Check that all the actions / status checks succeeded. Will also
-        fail if we have status checks in progress.
-        """
         failures = []
         pending = []
         for status in data["statusCheckRollup"]:
@@ -91,34 +75,52 @@ class PRMerger:
                     errstr += "\n"
                 errstr += "    PENDING: "
                 errstr += ", ".join([d["name"] for d in pending])
-
             return False, errstr
 
         return True
 
     def validate_commits(self, data):
-        """
-        Validate that the PR contains just one commit. If it has more
-        we might want to squash. Which is something we could add to
-        this script in the future.
-        """
         if len(data["commits"]) > 1:
             return False, f"More than 1 commit! {len(data['commits'])}"
+        return True
+    
+    def validate_public_headers(self, data):
+        """
+        Validate that no public headers (in llvm/include or clang/include) are changed.
+        This helps detect potential ABI breakage risks.
+        """
+        # Get the diff from the PR branch compared to the base
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"{self.args.upstream}/{self.target_branch}...HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            changed_files = result.stdout.strip().splitlines()
+        except subprocess.CalledProcessError:
+            return False, "Failed to run git diff"
+
+        # Check for public header changes
+        public_header_touched = [
+            f for f in changed_files
+            if f.startswith("llvm/include/") or f.startswith("clang/include/")
+        ]
+
+        if public_header_touched:
+            return False, f"Public headers changed: {', '.join(public_header_touched)}"
         return True
 
     def _normalize_pr(self, parg: str):
         if parg.isdigit():
             return parg
         elif parg.startswith("https://github.com/llvm/llvm-project/pull"):
-            # try to parse the following url https://github.com/llvm/llvm-project/pull/114089
-            i = parg[parg.rfind("/") + 1 :]
+            i = parg[parg.rfind("/") + 1:]
             if not i.isdigit():
                 raise RuntimeError(f"{i} is not a number, malformatted input.")
             return i
         else:
-            raise RuntimeError(
-                f"PR argument must be PR ID or pull request URL - {parg} is wrong."
-            )
+            raise RuntimeError(f"PR argument must be PR ID or pull request URL - {parg} is wrong.")
 
     def load_pr_data(self):
         self.args.pr = self._normalize_pr(self.args.pr)
@@ -135,13 +137,9 @@ class PRMerger:
             "url",
         ]
         print(f"> Loading PR {self.args.pr}...")
-        o = self.run_gh(
-            "pr",
-            ["view", self.args.pr, "--json", ",".join(fields_to_fetch)],
-        )
+        o = self.run_gh("pr", ["view", self.args.pr, "--json", ",".join(fields_to_fetch)])
         self.prdata = json.loads(o)
 
-        # save the baseRefName (target branch) so that we know where to push
         self.target_branch = self.prdata["baseRefName"]
         srepo = self.prdata["headRepository"]["name"]
         sowner = self.prdata["headRepositoryOwner"]["login"]
@@ -153,134 +151,132 @@ class PRMerger:
             sys.exit(1)
 
         if sowner == "llvm":
-            print(
-                "The source owner should never be github.com/llvm, double check the PR!"
-            )
+            print("The source owner should never be github.com/llvm, double check the PR!")
             sys.exit(1)
 
     def validate_pr(self):
         print(f"> Handling PR {self.args.pr} - {self.prdata['title']}")
-        print(f">   {self.prdata['url']}")
-
-        VALIDATIONS = {
+        print(f">   {self.prdata['url']}\n")
+        print("> Validations:")
+        total_ok = True
+        validations = {
             "state": self.validate_state,
             "target_branch": self.validate_target_branch,
             "approval": self.validate_approval,
             "commits": self.validate_commits,
             "status_checks": self.validate_status_checks,
+            "public_headers": self.validate_public_headers,
         }
 
-        print()
-        print("> Validations:")
-        total_ok = True
-        for val_name, val_func in VALIDATIONS.items():
+        for val_name, val_func in validations.items():
             try:
-                validation_data = val_func(self.prdata)
-            except:
-                validation_data = False
+                result = val_func(self.prdata)
+            except Exception as e:
+                result = False
             ok = None
-            skipped = (
-                True
-                if (self.args.skip_validation and val_name in self.args.skip_validation)
-                else False
-            )
-            if isinstance(validation_data, bool) and validation_data:
+            skipped = self.args.skip_validation and val_name in self.args.skip_validation
+            if isinstance(result, bool) and result:
                 ok = "OK"
-            elif isinstance(validation_data, tuple) and not validation_data[0]:
-                failstr = validation_data[1]
-                if skipped:
-                    ok = "SKIPPED: "
-                else:
+            elif isinstance(result, tuple) and not result[0]:
+                msg = result[1]
+                ok = "SKIPPED: " + msg if skipped else "FAIL: " + msg
+                if not skipped:
                     total_ok = False
-                    ok = "FAIL: "
-                ok += failstr
             else:
                 ok = "FAIL! (Unknown)"
+                total_ok = False
             print(f"  * {val_name}: {ok}")
-        return total_ok
 
-    def rebase_pr(self):
-        print("> Fetching upstream")
-        subprocess.run(["git", "fetch", "--all"], check=True)
-        print("> Rebasing...")
-        subprocess.run(
-            ["git", "rebase", self.args.upstream + "/" + self.target_branch], check=True
-        )
-        print("> Publish rebase...")
-        subprocess.run(
-            ["git", "push", "--force", self.source_url, f"HEAD:{self.source_branch}"]
-        )
+        return total_ok
 
     def checkout_pr(self):
         print("> Fetching PR changes...")
         self.merge_branch = "llvm_merger_" + self.args.pr
-        self.run_gh(
-            "pr",
-            [
-                "checkout",
-                self.args.pr,
-                "--force",
-                "--branch",
-                self.merge_branch,
-            ],
+        self.run_gh("pr", ["checkout", self.args.pr, "--force", "--branch", self.merge_branch])
+
+        result = subprocess.run(
+            ["git", "config", f"branch.{self.merge_branch}.merge"],
+            check=True, capture_output=True, text=True
+        )
+        upstream_branch = result.stdout.strip().replace("refs/heads/", "")
+        print(upstream_branch)
+
+    def rebase_pr(self):
+        print("> Fetching upstream")
+        subprocess.run(["git", "fetch", "--all", "-j10"], check=True)
+        print("> Rebasing...")
+        subprocess.run(["git", "rebase", f"{self.args.upstream}/{self.target_branch}"], check=True)
+        print("> Publish rebase...")
+        subprocess.run(["git", "push", "--force", self.source_url, f"HEAD:{self.source_branch}"])
+
+    def squash_and_rebase(self):
+        print("> Squashing all commits into the first one...")
+        result = subprocess.run(
+            ["git", "merge-base", f"{self.args.upstream}/{self.target_branch}", "HEAD"],
+            capture_output=True, text=True, check=True
+        )
+        base = result.stdout.strip()
+
+        result = subprocess.run(
+            ["git", "rev-list", "--reverse", "--ancestry-path", f"{base}..HEAD"],
+            capture_output=True, text=True, check=True
+        )
+        commits = result.stdout.strip().splitlines()
+        if not commits:
+            raise RuntimeError("Could not find any commits after merge base")
+        first_commit = commits[0]
+        print(f"> First commit on branch is {first_commit}")
+
+        subprocess.run(["git", "reset", "--soft", first_commit], check=True)
+        amend_args = ["git", "commit", "--amend"]
+        if not self.args.edit_message:
+            amend_args.append("--no-edit")
+        subprocess.run(amend_args, check=True)
+
+        print("> Publish rebase...")
+        subprocess.run(["git", "push", "--force", self.source_url, f"HEAD:{self.source_branch}"])
+
+        print("> Rebasing on top of target branch...")
+        subprocess.run(
+            ["git", "rebase", "--onto", f"{self.args.upstream}/{self.target_branch}", first_commit],
+            check=True
         )
 
-        # get the branch information so that we can use it for
-        # pushing later.
-        p = subprocess.run(
-            ["git", "config", f"branch.{self.merge_branch}.merge"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        upstream_branch = p.stdout.strip().replace("refs/heads/", "")
-        print(upstream_branch)
+        print("> Publish rebase...")
+        subprocess.run(["git", "push", "--force", self.source_url, f"HEAD:{self.source_branch}"])
+
 
     def push_upstream(self):
         print("> Pushing changes...")
-        subprocess.run(
-            ["git", "push", self.args.upstream, "HEAD:" + self.target_branch],
-            check=True,
-        )
+        subprocess.run(["git", "push", self.args.upstream, f"HEAD:{self.target_branch}"], check=True)
 
     def delete_local_branch(self):
         print("> Deleting the old branch...")
-        subprocess.run(["git", "switch", "main"])
-        subprocess.run(["git", "branch", "-D", f"llvm_merger_{self.args.pr}"])
+        subprocess.run(["git", "switch", "main"], check=True)
+        subprocess.run(["git", "branch", "-D", self.merge_branch], check=True)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("pr", help="The Pull Request ID or URL")
     parser.add_argument(
-        "pr",
-        help="The Pull Request ID that should be merged into a release. Can be number or URL",
+        "--skip-validation", "-s", action="append",
+        help="Skip specific validation(s) like -s status_checks"
     )
     parser.add_argument(
-        "--skip-validation",
-        "-s",
-        action="append",
-        help="Skip a specific validation, can be passed multiple times. I.e. -s status_checks -s approval",
+        "--upstream-origin", "-o", default="upstream", dest="upstream",
+        help="The name of the origin to push to (default: upstream)"
     )
     parser.add_argument(
-        "--upstream-origin",
-        "-o",
-        default="upstream",
-        dest="upstream",
-        help="The name of the origin that we should push to. (default: upstream)",
+        "--no-push", action="store_true",
+        help="Run validations, rebase, and fetch, but don't push"
     )
-    parser.add_argument(
-        "--no-push",
-        action="store_true",
-        help="Run validations, rebase and fetch, but don't push.",
-    )
-    parser.add_argument(
-        "--validate-only", action="store_true", help="Only run the validations."
-    )
-    parser.add_argument(
-        "--rebase-only", action="store_true", help="Only rebase and exit"
-    )
-    args = parser.parse_args()
+    parser.add_argument("--validate-only", action="store_true", help="Only run the validations")
+    parser.add_argument("--rebase-only", action="store_true", help="Only rebase and exit")
+    parser.add_argument("--squash-and-rebase", action="store_true", help="Squash all commits and rebase")
+    parser.add_argument("--edit-message", action="store_true", help="Edit commit message during squash")
 
+    args = parser.parse_args()
     merger = PRMerger(args)
     merger.load_pr_data()
 
@@ -290,28 +286,29 @@ if __name__ == "__main__":
         merger.delete_local_branch()
         sys.exit(0)
 
+    if args.squash_and_rebase:
+        merger.checkout_pr()
+        merger.squash_and_rebase()
+        merger.delete_local_branch()
+        sys.exit(0)
+
     if not merger.validate_pr():
-        print()
-        print(
-            "! Validations failed! Pass --skip-validation/-s <validation name> to pass this, can be passed multiple times"
-        )
+        print("\n! Validations failed! Use --skip-validation to override.")
         sys.exit(1)
 
     if args.validate_only:
-        print()
-        print("! --validate-only passed, will exit here")
+        print("\n! --validate-only passed, exiting.")
         sys.exit(0)
 
     merger.checkout_pr()
     merger.rebase_pr()
 
-    if args.no_push:
-        print()
-        print("! --no-push passed, will exit here")
-        sys.exit(0)
-
-    merger.push_upstream()
+    if not args.no_push:
+        merger.push_upstream()
     merger.delete_local_branch()
 
-    print()
-    print("> Done! Have a nice day!")
+    print("\n> Done! Have a nice day!")
+
+
+if __name__ == "__main__":
+    main()
