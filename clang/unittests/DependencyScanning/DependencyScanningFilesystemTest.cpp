@@ -271,6 +271,11 @@ TEST(DependencyScanningFilesystem, CacheStatFailures) {
   EXPECT_EQ(InstrumentingFS->NumStatusCalls, 3u);
   DepFS.status("/dir/missing.h");
   EXPECT_EQ(InstrumentingFS->NumStatusCalls, 3u);
+
+  DepFS.status("/dir/vector");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 4u);
+  DepFS.status("/dir/vector");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 4u);
 }
 
 TEST(DependencyScanningFilesystem, NoNegativeCache) {

@@ -31,8 +31,6 @@ bool dependencies::shouldCacheNegativeStatsDefault() {
 // configured projects.
 bool dependencies::shouldCacheNegativeStatsForPath(StringRef Path) {
   StringRef Ext = llvm::sys::path::extension(Path);
-  if (Ext.empty())
-    return false;
   if (Ext == ".framework")
     return false;
   return true;
