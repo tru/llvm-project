@@ -117,6 +117,7 @@ tools = [
     "llvm-offload-binary",
     "clang-tblgen",
     "clang-scan-deps",
+    "fbsd-cli",
     "clang-installapi",
     "opt",
     "llvm-ifs",

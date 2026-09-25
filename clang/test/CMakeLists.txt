@@ -113,6 +113,10 @@ list(APPEND CLANG_TEST_DEPS
   hmaptool
   )
 
+if(WIN32)
+  list(APPEND CLANG_TEST_DEPS fastbuild-scan-deps fbsd-cli)
+endif()
+
 if(CLANG_ENABLE_CIR)
   list(APPEND CLANG_TEST_DEPS
     cir-opt
