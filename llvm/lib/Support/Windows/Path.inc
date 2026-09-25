@@ -860,6 +860,40 @@ static perms perms_from_attrs(DWORD Attrs) {
   return (Attrs & FILE_ATTRIBUTE_READONLY) ? (all_read | all_exe) : all_all;
 }
 
+namespace {
+// Mirrors FILE_STAT_BASIC_INFORMATION / FILE_ID_INFO, which WindowsSupport.h's
+// _WIN32_WINNT hides.
+struct StatBasicByName {
+  LARGE_INTEGER FileId, CreationTime, LastAccessTime, LastWriteTime, ChangeTime,
+      AllocationSize, EndOfFile;
+  DWORD FileAttributes, ReparseTag, NumberOfLinks, DeviceType,
+      DeviceCharacteristics, Reserved;
+  LARGE_INTEGER VolumeSerialNumber;
+  BYTE FileId128[16];
+};
+struct FileIdInformation {
+  ULONGLONG VolumeSerialNumber;
+  BYTE FileId[16];
+};
+using GetFileInformationByNameFn = BOOL(WINAPI *)(PCWSTR, int, PVOID, ULONG);
+} // namespace
+
+// Only available from Windows 11 24H2.
+static GetFileInformationByNameFn getFileInformationByName() {
+  static const GetFileInformationByNameFn Fn = [] {
+    HMODULE M = ::GetModuleHandleW(L"kernelbase.dll");
+    return M ? reinterpret_cast<GetFileInformationByNameFn>(
+                   ::GetProcAddress(M, "GetFileInformationByName"))
+             : nullptr;
+  }();
+  return Fn;
+}
+
+// Path and handle stats must hash the same ID, or one file gets two UniqueIDs.
+static uint64_t hashFileId(const BYTE (&Id)[16]) {
+  return hash_combine_range(std::begin(Id), std::end(Id));
+}
+
 static std::error_code getStatus(HANDLE FileHandle, file_status &Result) {
   SmallVector<wchar_t, MAX_PATH> ntPath;
   if (FileHandle == INVALID_HANDLE_VALUE)
@@ -900,8 +934,14 @@ static std::error_code getStatus(HANDLE FileHandle, file_status &Result) {
   // drivers, such as ImDisk. (See
   // https://github.com/rust-lang/rust/pull/86447.)
   uint64_t PathHash;
-  if (std::error_code EC =
-          realPathFromHandle(FileHandle, ntPath, VOLUME_NAME_NT)) {
+  FileIdInformation IdInfo;
+  if (::GetFileInformationByHandleEx(
+          FileHandle,
+          static_cast<FILE_INFO_BY_HANDLE_CLASS>(0x12 /*FileIdInfo*/), &IdInfo,
+          sizeof(IdInfo))) {
+    PathHash = hashFileId(IdInfo.FileId);
+  } else if (std::error_code EC =
+                 realPathFromHandle(FileHandle, ntPath, VOLUME_NAME_NT)) {
     // If realPathFromHandle failed, fall back on the fields
     // nFileIndex{High,Low} instead. They're not necessarily stable on all file
     // systems as they're only documented as being unique/stable as long as the
@@ -947,6 +987,28 @@ std::error_code status(const Twine &path, file_status &result, bool Follow) {
 
   if (std::error_code ec = widenPath(path8, path_utf16))
     return ec;
+
+  if (auto GetByName = Follow ? getFileInformationByName() : nullptr) {
+    StatBasicByName S;
+    if (GetByName(path_utf16.begin(), 3 /*FileStatBasicByNameInfo*/, &S,
+                  sizeof(S))) {
+      if (!(S.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+          S.DeviceType == FILE_DEVICE_DISK) {
+        result = file_status(
+            file_type_from_attrs(S.FileAttributes),
+            perms_from_attrs(S.FileAttributes), S.NumberOfLinks,
+            uint32_t(S.LastAccessTime.HighPart), S.LastAccessTime.LowPart,
+            uint32_t(S.LastWriteTime.HighPart), S.LastWriteTime.LowPart,
+            S.VolumeSerialNumber.LowPart, uint32_t(S.EndOfFile.HighPart),
+            S.EndOfFile.LowPart, hashFileId(S.FileId128));
+        return std::error_code();
+      }
+    } else {
+      DWORD Err = ::GetLastError();
+      if (Err == ERROR_FILE_NOT_FOUND || Err == ERROR_PATH_NOT_FOUND)
+        return getStatus(INVALID_HANDLE_VALUE, result);
+    }
+  }
 
   DWORD Flags = FILE_FLAG_BACKUP_SEMANTICS;
   if (!Follow) {
